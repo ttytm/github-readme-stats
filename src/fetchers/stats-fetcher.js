@@ -46,8 +46,8 @@ const GRAPHQL_STATS_QUERY = `
       name
       login
       contributionsCollection {
-        totalCommitContributions
-        restrictedContributionsCount
+        totalCommitContributions,
+        totalPullRequestReviewContributions
       }
       repositoriesContributedTo(first: 1, contributionTypes: [COMMIT, ISSUE, PULL_REQUEST, REPOSITORY]) {
         totalCount
@@ -64,17 +64,27 @@ const GRAPHQL_STATS_QUERY = `
       followers {
         totalCount
       }
+      repositoryDiscussions {
+        totalCount
+      }
+      repositoryDiscussionComments(onlyAnswers: true) {
+        totalCount
+      }
       ${GRAPHQL_REPOS_FIELD}
     }
   }
 `;
 
 /**
+ * @typedef {import('axios').AxiosResponse} AxiosResponse Axios response.
+ */
+
+/**
  * Stats fetcher object.
  *
- * @param {import('axios').AxiosRequestHeaders} variables Fetcher variables.
+ * @param {object} variables Fetcher variables.
  * @param {string} token GitHub token.
- * @returns {Promise<import('../common/types').Fetcher>} Stats fetcher response.
+ * @returns {Promise<AxiosResponse>} Axios response.
  */
 const fetcher = (variables, token) => {
   const query = !variables.after ? GRAPHQL_STATS_QUERY : GRAPHQL_REPOS_QUERY;
@@ -177,10 +187,13 @@ const totalCommitsFetcher = async (username) => {
 };
 
 /**
+ * @typedef {import("./types").StatsData} StatsData Stats data.
+ */
+
+/**
  * Fetch stats for a given username.
  *
  * @param {string} username GitHub username.
- * @param {boolean} count_private Include private contributions.
  * @param {boolean} include_all_commits Include all commits.
  * @param {string[]} exclude_repo Repositories to exclude.  Default: [].
  * @param {string[]} ownerAffiliations Owner affiliations. Default: OWNER.
@@ -188,7 +201,6 @@ const totalCommitsFetcher = async (username) => {
  */
 const fetchStats = async (
   username,
-  count_private = false,
   include_all_commits = false,
   exclude_repo = [],
   ownerAffiliations = [],
@@ -198,11 +210,14 @@ const fetchStats = async (
   const stats = {
     name: "",
     totalPRs: 0,
+    totalReviews: 0,
     totalCommits: 0,
     totalIssues: 0,
     totalStars: 0,
+    totalDiscussionsStarted: 0,
+    totalDiscussionsAnswered: 0,
     contributedTo: 0,
-    rank: { level: "B", score: 0 },
+    rank: { level: "C", percentile: 100 },
   };
   ownerAffiliations = parseOwnerAffiliations(ownerAffiliations);
 
@@ -240,14 +255,12 @@ const fetchStats = async (
     stats.totalCommits = user.contributionsCollection.totalCommitContributions;
   }
 
-  // if count_private, add private contributions to totalCommits.
-  if (count_private) {
-    stats.totalCommits +=
-      user.contributionsCollection.restrictedContributionsCount;
-  }
-
   stats.totalPRs = user.pullRequests.totalCount;
+  stats.totalReviews =
+    user.contributionsCollection.totalPullRequestReviewContributions;
   stats.totalIssues = user.openIssues.totalCount + user.closedIssues.totalCount;
+  stats.totalDiscussionsStarted = user.repositoryDiscussions.totalCount;
+  stats.totalDiscussionsAnswered = user.repositoryDiscussionComments.totalCount;
   stats.contributedTo = user.repositoriesContributedTo.totalCount;
 
   // Retrieve stars while filtering out repositories to be hidden.
@@ -265,6 +278,7 @@ const fetchStats = async (
     all_commits: include_all_commits,
     commits: stats.totalCommits,
     prs: stats.totalPRs,
+    reviews: stats.totalReviews,
     issues: stats.totalIssues,
     repos: user.repositories.totalCount,
     stars: stats.totalStars,
